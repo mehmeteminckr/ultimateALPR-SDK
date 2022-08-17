@@ -106,7 +106,7 @@ def checkResult(operation, result):
 def get_database():
     import pymongo
 
-    client = pymongo.MongoClient("mongodb+srv://mehmet1234:mehmet1234@cluster0.q4kucmf.mongodb.net/?retryWrites=true&w=majority")
+    client = pymongo.MongoClient("mongodb+srv://mehmet1234:<password>@cluster0.q4kucmf.mongodb.net/?retryWrites=true&w=majority")
     db = client.test
     # Create the database for our example (we will use the same database throughout the tutorial
     return client['CarPlates']
