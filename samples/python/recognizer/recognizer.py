@@ -26,6 +26,10 @@ import ultimateAlprSdk
 import argparse
 import json
 import os.path
+import cv2
+from PIL import Image
+import datetime
+import re
 
 TAG = "[PythonRecognizer] "
 
@@ -63,10 +67,10 @@ IMAGE_TYPES_MAPPING = {
 }
 
 # Load image
-def load_pil_image(path):
+def load_pil_image(pil_image):
     from PIL import Image, ExifTags, ImageOps
     import traceback
-    pil_image = Image.open(path)
+    #pil_image = Image.open(path)
     img_exif = pil_image.getexif()
     ret = {}
     orientation  = 1
@@ -96,7 +100,17 @@ def checkResult(operation, result):
         print(TAG + operation + ": failed -> " + result.phrase())
         assert False
     else:
-        print(TAG + operation + ": OK -> " + result.json())
+        #print(TAG + operation + ": OK -> " + result.json())
+        return result.json()
+
+def get_database():
+    import pymongo
+
+    client = pymongo.MongoClient("mongodb+srv://mehmet1234:mehmet1234@cluster0.q4kucmf.mongodb.net/?retryWrites=true&w=majority")
+    db = client.test
+    # Create the database for our example (we will use the same database throughout the tutorial
+    return client['CarPlates']
+    
 
 # Entry point
 if __name__ == "__main__":
@@ -125,9 +139,6 @@ if __name__ == "__main__":
     if not os.path.isfile(args.image):
         raise OSError(TAG + "File doesn't exist: %s" % args.image)
 
-     # Decode the image and extract type
-    image, imageType = load_pil_image(args.image)
-    width, height = image.size
 
     # Update JSON options using values from the command args
     JSON_CONFIG["assets_folder"] = args.assets
@@ -144,16 +155,27 @@ if __name__ == "__main__":
     JSON_CONFIG["license_token_file"] = args.tokenfile
     JSON_CONFIG["license_token_data"] = args.tokendata
 
+    db = get_database()
+
+    collection_name = db["turkish_cars"]
+
     # Initialize the engine
     checkResult("Init", 
                 ultimateAlprSdk.UltAlprSdkEngine_init(json.dumps(JSON_CONFIG))
                )
 
-    # Recognize/Process
-    # Please note that the first time you call this function all deep learning models will be loaded 
-    # and initialized which means it will be slow. In your application you've to initialize the engine
-    # once and do all the recognitions you need then, deinitialize it.
-    checkResult("Process",
+
+    cap = cv2.VideoCapture(args.image) 
+    detections = {}
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        image, imageType = load_pil_image(pil_img)
+        width, height = image.size
+        res = checkResult("Process",
                 ultimateAlprSdk.UltAlprSdkEngine_process(
                     imageType,
                     image.tobytes(), # type(x) == bytes
@@ -163,7 +185,28 @@ if __name__ == "__main__":
                     1 # exifOrientation (already rotated in load_image -> use default value: 1)
                 )
         )
-
+        y = json.loads(res)
+        pattern = '\d{2}\s?[A-Z]{1,3}\s?\d{1,3}'
+        if('plates' in y and 'car' in y['plates'][0] and all(conf > 88 for conf in y['plates'][0]['confidences']) and re.match(pattern,y['plates'][0]['text'][:-1])):
+            #pil_img.show()
+            warpedBox = y['plates'][0]['car']['warpedBox']
+            plateBox = y['plates'][0]['warpedBox']
+            cv2.rectangle(frame,(int(warpedBox[6]),int(warpedBox[7])),(int(warpedBox[2]),int(warpedBox[3])),(0,255,0),3)
+            cv2.rectangle(frame,(int(plateBox[6]),int(plateBox[7])),(int(plateBox[2]),int(plateBox[3])),(0,255,0),3)
+            cv2.putText(frame, y['plates'][0]['text'], (int(warpedBox[6]), int(warpedBox[7])-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
+            if(y['plates'][0]['text'] not in detections):
+                item_1 = {
+                        "item_name" : y['plates'][0]['text'],
+                        "last_updated": datetime.datetime.now()
+                    }
+                collection_name.insert_many([item_1])
+            detections[y['plates'][0]['text']] = y['frame_id']
+            print(detections)
+        cv2.imshow('frame',frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+    cap.release()
+    cv2.destroyAllWindows()
     # Press any key to exit
     input("\nPress Enter to exit...\n") 
 
